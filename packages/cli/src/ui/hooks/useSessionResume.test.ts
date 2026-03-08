@@ -33,6 +33,7 @@ describe('useSessionResume', () => {
     updateItem: vi.fn(),
     clearItems: vi.fn(),
     loadHistory: vi.fn(),
+    pruneItems: vi.fn(),
   });
 
   let mockHistoryManager: UseHistoryManagerReturn;

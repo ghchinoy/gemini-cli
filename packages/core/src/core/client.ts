@@ -1175,6 +1175,7 @@ export class GeminiClient {
         // capture current session data before resetting
         const currentRecordingService =
           this.getChat().getChatRecordingService();
+        currentRecordingService.recordCompressionPoint();
         const conversation = currentRecordingService.getConversation();
         const filePath = currentRecordingService.getConversationFilePath();
 

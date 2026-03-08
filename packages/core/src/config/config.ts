@@ -33,6 +33,7 @@ import { WebFetchTool } from '../tools/web-fetch.js';
 import { MemoryTool, setGeminiMdFilename } from '../tools/memoryTool.js';
 import { WebSearchTool } from '../tools/web-search.js';
 import { AskUserTool } from '../tools/ask-user.js';
+import { ScheduleWorkTool } from '../tools/schedule-work.js';
 import { ExitPlanModeTool } from '../tools/exit-plan-mode.js';
 import { EnterPlanModeTool } from '../tools/enter-plan-mode.js';
 import { GeminiClient } from '../core/client.js';
@@ -247,6 +248,13 @@ export interface AgentOverride {
 export interface AgentSettings {
   overrides?: Record<string, AgentOverride>;
   browser?: BrowserAgentCustomConfig;
+}
+
+export interface SisyphusModeSettings {
+  enabled: boolean;
+  idleTimeout?: number;
+  prompt?: string;
+  a2aPort?: number;
 }
 
 export interface CustomTheme {
@@ -637,6 +645,8 @@ export interface ConfigParameters {
   mcpEnabled?: boolean;
   extensionsEnabled?: boolean;
   agents?: AgentSettings;
+  sisyphusMode?: SisyphusModeSettings;
+  isForeverMode?: boolean;
   onReload?: () => Promise<{
     disabledSkills?: string[];
     adminSkillsEnabled?: boolean;
@@ -842,6 +852,8 @@ export class Config implements McpContext, AgentLoopContext {
 
   private readonly enableAgents: boolean;
   private agents: AgentSettings;
+  private readonly isForeverMode: boolean;
+  private readonly sisyphusMode: SisyphusModeSettings;
   private readonly enableEventDrivenScheduler: boolean;
   private readonly skillsSupport: boolean;
   private disabledSkills: string[];
@@ -953,6 +965,13 @@ export class Config implements McpContext, AgentLoopContext {
     this._activeModel = params.model;
     this.enableAgents = params.enableAgents ?? true;
     this.agents = params.agents ?? {};
+    this.isForeverMode = params.isForeverMode ?? false;
+    this.sisyphusMode = {
+      enabled: params.sisyphusMode?.enabled ?? false,
+      idleTimeout: params.sisyphusMode?.idleTimeout,
+      prompt: params.sisyphusMode?.prompt,
+      a2aPort: params.sisyphusMode?.a2aPort,
+    };
     this.disableLLMCorrection = params.disableLLMCorrection ?? true;
     this.planEnabled = params.plan ?? true;
     this.trackerEnabled = params.tracker ?? false;
@@ -2627,6 +2646,14 @@ export class Config implements McpContext, AgentLoopContext {
     return remoteThreshold;
   }
 
+  getIsForeverMode(): boolean {
+    return this.isForeverMode;
+  }
+
+  getSisyphusMode(): SisyphusModeSettings {
+    return this.sisyphusMode;
+  }
+
   async getUserCaching(): Promise<boolean | undefined> {
     await this.ensureExperimentsLoaded();
 
@@ -2778,6 +2805,7 @@ export class Config implements McpContext, AgentLoopContext {
   }
 
   isInteractiveShellEnabled(): boolean {
+    if (this.isForeverMode) return false;
     return (
       this.interactive &&
       this.ptyInfo !== 'child_process' &&
@@ -3095,15 +3123,22 @@ export class Config implements McpContext, AgentLoopContext {
     maybeRegister(ShellTool, () =>
       registry.registerTool(new ShellTool(this, this.messageBus)),
     );
-    maybeRegister(MemoryTool, () =>
-      registry.registerTool(new MemoryTool(this.messageBus)),
-    );
+    if (!this.isForeverMode) {
+      maybeRegister(MemoryTool, () =>
+        registry.registerTool(new MemoryTool(this.messageBus)),
+      );
+    }
     maybeRegister(WebSearchTool, () =>
       registry.registerTool(new WebSearchTool(this, this.messageBus)),
     );
     maybeRegister(AskUserTool, () =>
       registry.registerTool(new AskUserTool(this.messageBus)),
     );
+    if (this.isForeverMode) {
+      maybeRegister(ScheduleWorkTool, () =>
+        registry.registerTool(new ScheduleWorkTool(this.messageBus)),
+      );
+    }
     if (this.getUseWriteTodos()) {
       maybeRegister(WriteTodosTool, () =>
         registry.registerTool(new WriteTodosTool(this.messageBus)),
@@ -3113,9 +3148,11 @@ export class Config implements McpContext, AgentLoopContext {
       maybeRegister(ExitPlanModeTool, () =>
         registry.registerTool(new ExitPlanModeTool(this, this.messageBus)),
       );
-      maybeRegister(EnterPlanModeTool, () =>
-        registry.registerTool(new EnterPlanModeTool(this, this.messageBus)),
-      );
+      if (!this.isForeverMode) {
+        maybeRegister(EnterPlanModeTool, () =>
+          registry.registerTool(new EnterPlanModeTool(this, this.messageBus)),
+        );
+      }
     }
 
     if (this.isTrackerEnabled()) {

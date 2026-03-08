@@ -38,6 +38,7 @@ import {
   GeminiCliOperation,
   getPlanModeExitMessage,
   isBackgroundExecutionData,
+  SCHEDULE_WORK_TOOL_NAME,
 } from '@google/gemini-cli-core';
 import type {
   Config,
@@ -219,6 +220,7 @@ export const useGeminiStream = (
   terminalHeight: number,
   isShellFocused?: boolean,
   consumeUserHint?: () => string | null,
+  pruneItems?: () => void,
 ) => {
   const [initError, setInitError] = useState<string | null>(null);
   const [retryStatus, setRetryStatus] = useState<RetryAttemptPayload | null>(
@@ -255,6 +257,16 @@ export const useGeminiStream = (
   const [_isFirstToolInGroup, isFirstToolInGroupRef, setIsFirstToolInGroup] =
     useStateAndRef<boolean>(true);
   const processedMemoryToolsRef = useRef<Set<string>>(new Set());
+
+  // Sisyphus Mode: schedule_work auto-resume timer
+  const sisyphusTargetTimestampRef = useRef<number | null>(null);
+  const [sisyphusSecondsRemaining, setSisyphusSecondsRemaining] = useState<
+    number | null
+  >(null);
+  const submitQueryRef = useRef<(query: PartListUnion) => Promise<void>>(() =>
+    Promise.resolve(),
+  );
+
   const { startNewPrompt, getPromptCount } = useSessionStats();
   const storage = config.storage;
   const logger = useLogger(storage);
@@ -1127,8 +1139,12 @@ export const useGeminiStream = (
         } as HistoryItemInfo,
         userMessageTimestamp,
       );
+
+      // Prune old UI history items to prevent unbounded memory growth
+      // in long-running sessions.
+      pruneItems?.();
     },
-    [addItem, pendingHistoryItemRef, setPendingHistoryItem, config],
+    [addItem, pendingHistoryItemRef, setPendingHistoryItem, config, pruneItems],
   );
 
   const handleMaxSessionTurnsEvent = useCallback(
@@ -1292,6 +1308,15 @@ export const useGeminiStream = (
             );
             break;
           case ServerGeminiEventType.ToolCallRequest:
+            if (event.value.name === SCHEDULE_WORK_TOOL_NAME) {
+              const args = event.value.args;
+              const inMinutes = Number(args?.['inMinutes'] ?? 0);
+              if (inMinutes > 0) {
+                const delayMs = inMinutes * 60 * 1000;
+                sisyphusTargetTimestampRef.current = Date.now() + delayMs;
+                setSisyphusSecondsRemaining(Math.ceil(delayMs / 1000));
+              }
+            }
             toolCallRequests.push(event.value);
             break;
           case ServerGeminiEventType.UserCancelled:
@@ -1910,6 +1935,104 @@ export const useGeminiStream = (
     storage,
   ]);
 
+  // Idle hook timer: fires after idleTimeout seconds of no activity.
+  // If idleTimeout is explicitly set, use it. Otherwise, if any Idle hooks
+  // are registered (e.g. by an extension), use a default of 300 seconds.
+  const DEFAULT_IDLE_TIMEOUT = 300;
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const configuredIdleTimeout = settings.merged.hooksConfig?.idleTimeout ?? 0;
+  useEffect(() => {
+    // Clear any existing timer
+    if (idleTimerRef.current) {
+      clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = null;
+    }
+
+    if (streamingState !== StreamingState.Idle || !config.getEnableHooks()) {
+      return;
+    }
+
+    // Compute effective timeout: use configured value, or default if
+    // Idle hooks are registered (e.g. by an extension).
+    let idleTimeoutSeconds: number = configuredIdleTimeout;
+    if (idleTimeoutSeconds <= 0) {
+      const hookSystem = config.getHookSystem();
+      const hasIdleHooks = hookSystem
+        ?.getAllHooks()
+        .some((h) => h.eventName === 'Idle' && h.enabled);
+      idleTimeoutSeconds = hasIdleHooks ? DEFAULT_IDLE_TIMEOUT : 0;
+    }
+
+    if (idleTimeoutSeconds <= 0) {
+      return;
+    }
+
+    const startTime = Date.now();
+    idleTimerRef.current = setTimeout(async () => {
+      const hookSystem = config.getHookSystem();
+      if (!hookSystem) return;
+
+      const elapsed = Math.round((Date.now() - startTime) / 1000);
+      try {
+        const result = await hookSystem.fireIdleEvent(elapsed);
+        const prompt = result?.finalOutput?.hookSpecificOutput?.['prompt'];
+        if (typeof prompt === 'string' && prompt.trim()) {
+          // Auto-submit the prompt returned by the hook
+          void submitQuery(prompt);
+        }
+      } catch {
+        // Idle hook failures are non-fatal
+      }
+    }, idleTimeoutSeconds * 1000);
+
+    return () => {
+      if (idleTimerRef.current) {
+        clearTimeout(idleTimerRef.current);
+        idleTimerRef.current = null;
+      }
+    };
+  }, [streamingState, configuredIdleTimeout, config, submitQuery]);
+
+  // Keep submitQueryRef in sync for Sisyphus timer
+  useEffect(() => {
+    submitQueryRef.current = submitQuery;
+  }, [submitQuery]);
+
+  // Sisyphus: auto-resume when countdown reaches zero
+  useEffect(() => {
+    if (
+      streamingState === StreamingState.Idle &&
+      sisyphusSecondsRemaining !== null &&
+      sisyphusSecondsRemaining <= 0
+    ) {
+      sisyphusTargetTimestampRef.current = null;
+      setSisyphusSecondsRemaining(null);
+      void submitQueryRef.current(
+        'System: The scheduled break has ended. Please resume your work.',
+      );
+    }
+  }, [streamingState, sisyphusSecondsRemaining]);
+
+  // Sisyphus: countdown timer interval
+  useEffect(() => {
+    if (
+      sisyphusTargetTimestampRef.current === null ||
+      streamingState !== StreamingState.Idle
+    ) {
+      return;
+    }
+
+    const timer = setInterval(() => {
+      if (sisyphusTargetTimestampRef.current !== null) {
+        const remainingMs = sisyphusTargetTimestampRef.current - Date.now();
+        const remainingSecs = Math.max(0, Math.ceil(remainingMs / 1000));
+        setSisyphusSecondsRemaining(remainingSecs);
+      }
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [streamingState]);
+
   const lastOutputTime = Math.max(
     lastToolOutputTime,
     lastShellOutputTime,
@@ -1935,5 +2058,6 @@ export const useGeminiStream = (
     backgroundShells,
     dismissBackgroundShell,
     retryStatus,
+    sisyphusSecondsRemaining,
   };
 };

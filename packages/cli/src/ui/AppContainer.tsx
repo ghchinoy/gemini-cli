@@ -1142,6 +1142,7 @@ Logging in with Google... Restarting Gemini CLI to continue.
     terminalHeight,
     embeddedShellFocused,
     consumePendingHints,
+    historyManager.pruneItems,
   );
 
   toggleBackgroundShellRef.current = toggleBackgroundShell;
