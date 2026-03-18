@@ -73,6 +73,7 @@ export interface CliArgs {
   debug: boolean | undefined;
   prompt: string | undefined;
   promptInteractive: string | undefined;
+  worktree?: string;
 
   yolo: boolean | undefined;
   approvalMode: string | undefined;
@@ -156,6 +157,20 @@ export async function parseArguments(
           nargs: 1,
           description:
             'Execute the provided prompt and continue in interactive mode',
+        })
+        .option('worktree', {
+          alias: 'w',
+          type: 'string',
+          skipValidation: true,
+          description:
+            'Start Gemini in a new git worktree. If no name is provided, one is generated automatically.',
+          coerce: (value: string): string => {
+            const trimmed = value.trim();
+            if (trimmed === '') {
+              return Math.random().toString(36).substring(2, 10);
+            }
+            return trimmed;
+          },
         })
         .option('sandbox', {
           alias: 's',
@@ -333,6 +348,9 @@ export async function parseArguments(
         )
       ) {
         return `Invalid values:\n  Argument: output-format, Given: "${argv['outputFormat']}", Choices: "text", "json", "stream-json"`;
+      }
+      if (argv['worktree'] && !settings.experimental?.worktrees) {
+        return 'The --worktree flag is only available when experimental.worktrees is enabled in your settings.';
       }
       return true;
     });

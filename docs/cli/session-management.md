@@ -96,6 +96,79 @@ Compatibility aliases:
 - `/chat ...` works for the same commands.
 - `/resume checkpoints ...` also remains supported during migration.
 
+## Parallel sessions with Git worktrees
+
+When working on multiple tasks at once, you need each Gemini session to have its
+own copy of the codebase so changes don't collide. Git worktrees solve this by
+creating separate working directories that each have their own files and branch,
+while sharing the same repository history.
+
+> **Note:** This is an experimental feature. To use it, you must enable it in
+> your settings:
+>
+> ```json
+> {
+>   "experimental": {
+>     "worktrees": true
+>   }
+> }
+> ```
+
+Use the `--worktree` (`-w`) flag to create an isolated worktree and start Gemini
+CLI in it. The value you pass becomes the worktree directory name and branch
+name:
+
+```bash
+# Start Gemini in a worktree named "feature-auth"
+# Creates .gemini/worktrees/feature-auth/ with a new branch
+gemini --worktree feature-auth
+
+# Start another session in a separate worktree
+gemini --worktree bugfix-123
+```
+
+If you omit the name, Gemini generates a random one automatically:
+
+```bash
+gemini --worktree
+```
+
+Worktrees are created at `<projectRoot>/.gemini/worktrees/<name>`. The worktree
+branch is named `worktree-<name>`.
+
+> **Note:** Remember to initialize your development environment in each new
+> worktree according to your project's setup. Depending on your stack, this
+> might include running dependency installation (`npm install`, `yarn`), setting
+> up virtual environments, or following your project's standard build process.
+
+### Worktree cleanup
+
+When you exit a worktree session, Gemini handles cleanup based on whether you
+made changes:
+
+- **No changes:** The worktree and its branch are removed automatically.
+- **Changes exist:** Gemini leaves the worktree intact and prints a message with
+  instructions on how to manually remove it. It does not display an interactive
+  prompt, ensuring your uncommitted work is safely preserved by default.
+
+### Managing worktrees manually
+
+For more control over worktree location and branch configuration, or to clean up
+a preserved worktree, you can use Git directly:
+
+```bash
+# Clean up a preserved worktree
+git worktree remove .gemini/worktrees/my-feature --force
+git branch -D worktree-my-feature
+
+# Create a worktree manually
+git worktree add ../project-feature-a -b feature-a
+cd ../project-feature-a && gemini
+```
+
+Learn more in the
+[official Git worktree documentation](https://git-scm.com/docs/git-worktree).
+
 ## Managing sessions
 
 You can list and delete sessions to keep your history organized and manage disk
