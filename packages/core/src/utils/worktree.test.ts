@@ -34,42 +34,30 @@ describe('worktree utilities', () => {
   });
 
   describe('getProjectRootForWorktree', () => {
-    it('should return the git root when not inside a worktree', async () => {
+    it('should return the project root from git common dir', async () => {
+      // In main repo, git-common-dir is often just ".git"
       vi.mocked(execa).mockResolvedValue({
-        stdout: '/mock/project\n',
+        stdout: '.git\n',
       } as never);
 
-      const result = await getProjectRootForWorktree('/mock/project/src');
+      const result = await getProjectRootForWorktree('/mock/project');
       expect(result).toBe('/mock/project');
       expect(execa).toHaveBeenCalledWith(
         'git',
-        ['rev-parse', '--show-toplevel'],
-        { cwd: '/mock/project/src' },
+        ['rev-parse', '--git-common-dir'],
+        { cwd: '/mock/project' },
       );
     });
 
-    it('should strip out .gemini/worktrees to return main project root', async () => {
+    it('should resolve absolute git common dir paths (as seen in worktrees)', async () => {
+      // Inside a worktree, git-common-dir is usually an absolute path to the main .git folder
       vi.mocked(execa).mockResolvedValue({
-        stdout: `/mock/project/.gemini/worktrees/my-feature\n`,
+        stdout: '/mock/project/.git\n',
       } as never);
 
       const result = await getProjectRootForWorktree(
-        '/mock/project/.gemini/worktrees/my-feature/src',
+        '/mock/project/.gemini/worktrees/my-feature',
       );
-      expect(result).toBe('/mock/project');
-    });
-
-    it('should handle paths properly if they contain the worktrees directory', async () => {
-      vi.mocked(execa).mockResolvedValue({
-        stdout: path.join(
-          '/mock/project',
-          '.gemini',
-          'worktrees',
-          'my-feature',
-        ),
-      } as never);
-
-      const result = await getProjectRootForWorktree('/mock/project/some/dir');
       expect(result).toBe('/mock/project');
     });
 

@@ -16,34 +16,28 @@ import {
 import { loadSettings, type LoadedSettings } from '../config/settings.js';
 import { registerCleanup } from './cleanup.js';
 
+/**
+ * Sets up a git worktree for parallel sessions.
+ * Returns the reloaded settings for the new worktree directory.
+ *
+ * This function uses a guard (GEMINI_CLI_WORKTREE_HANDLED) to ensure that
+ * when the CLI relaunches itself (e.g. for memory allocation), it doesn't
+ * attempt to create a nested worktree.
+ */
 export async function setupWorktree(
   worktreeName: string,
+  currentSettings: LoadedSettings,
 ): Promise<LoadedSettings> {
+  if (process.env['GEMINI_CLI_WORKTREE_HANDLED']) {
+    return currentSettings;
+  }
+
   try {
     const projectRoot = await getProjectRootForWorktree(process.cwd());
     const worktreePath = await createWorktree(projectRoot, worktreeName);
-    process.chdir(worktreePath);
 
-    // Strip --worktree so that if we relaunch, the child process doesn't recreate it
-    const wIndex = process.argv.findIndex(
-      (a) => a === '--worktree' || a === '-w',
-    );
-    if (wIndex !== -1) {
-      if (
-        process.argv.length > wIndex + 1 &&
-        !process.argv[wIndex + 1].startsWith('-')
-      ) {
-        process.argv.splice(wIndex, 2);
-      } else {
-        process.argv.splice(wIndex, 1);
-      }
-    }
-    const eqIndex = process.argv.findIndex(
-      (a) => a.startsWith('--worktree=') || a.startsWith('-w='),
-    );
-    if (eqIndex !== -1) {
-      process.argv.splice(eqIndex, 1);
-    }
+    process.chdir(worktreePath);
+    process.env['GEMINI_CLI_WORKTREE_HANDLED'] = '1';
 
     // Reload settings for the new worktree to pick up any local GEMINI.md
     const newSettings = loadSettings(process.cwd());

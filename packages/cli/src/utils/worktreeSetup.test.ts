@@ -39,16 +39,19 @@ vi.mock('./cleanup.js', () => ({
 }));
 
 describe('setupWorktree', () => {
-  const originalArgv = [...process.argv];
+  const originalEnv = { ...process.env };
   const originalCwd = process.cwd;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    process.argv = [...originalArgv];
+    process.env = { ...originalEnv };
 
     // Mock process.cwd and process.chdir
-    process.cwd = vi.fn().mockReturnValue('/mock/project');
-    process.chdir = vi.fn();
+    let currentPath = '/mock/project';
+    process.cwd = vi.fn().mockImplementation(() => currentPath);
+    process.chdir = vi.fn().mockImplementation((newPath) => {
+      currentPath = newPath;
+    });
 
     // Mock successful execution of core utilities
     vi.mocked(coreFunctions.getProjectRootForWorktree).mockResolvedValue(
@@ -63,18 +66,15 @@ describe('setupWorktree', () => {
   });
 
   afterEach(() => {
-    process.argv = [...originalArgv];
+    process.env = { ...originalEnv };
     process.cwd = originalCwd;
-    // Restore chdir is trickier, we mocked it on process directly
     delete (process as { chdir?: typeof process.chdir }).chdir;
-    // In node, process.chdir is a function. The spy will be cleared by clearAllMocks if it was a spy.
-    // Since we assigned it, we need to be careful, but vi.fn() can just be replaced.
   });
 
   it('should create and switch to a new worktree', async () => {
-    process.argv = ['node', 'gemini', '--worktree', 'my-feature'];
+    const initialSettings = { merged: { foo: 'bar' } } as never;
 
-    await setupWorktree('my-feature');
+    const result = await setupWorktree('my-feature', initialSettings);
 
     expect(coreFunctions.getProjectRootForWorktree).toHaveBeenCalledWith(
       '/mock/project',
@@ -87,77 +87,22 @@ describe('setupWorktree', () => {
       '/mock/project/.gemini/worktrees/my-feature',
     );
     expect(settingsFunctions.loadSettings).toHaveBeenCalledWith(
-      '/mock/project',
+      '/mock/project/.gemini/worktrees/my-feature',
     );
     expect(cleanupFunctions.registerCleanup).toHaveBeenCalled();
+    expect(process.env['GEMINI_CLI_WORKTREE_HANDLED']).toBe('1');
+    expect(result).not.toBe(initialSettings);
   });
 
-  it('should strip --worktree flag and its value from process.argv', async () => {
-    process.argv = [
-      'node',
-      'gemini',
-      '--worktree',
-      'my-feature',
-      '--prompt',
-      'hello',
-    ];
+  it('should skip worktree creation if GEMINI_CLI_WORKTREE_HANDLED is set', async () => {
+    process.env['GEMINI_CLI_WORKTREE_HANDLED'] = '1';
+    const initialSettings = { merged: { foo: 'bar' } } as never;
 
-    await setupWorktree('my-feature');
+    const result = await setupWorktree('my-feature', initialSettings);
 
-    expect(process.argv).toEqual(['node', 'gemini', '--prompt', 'hello']);
-  });
-
-  it('should strip --worktree flag when placed at the end', async () => {
-    process.argv = [
-      'node',
-      'gemini',
-      '--prompt',
-      'hello',
-      '--worktree',
-      'my-feature',
-    ];
-
-    await setupWorktree('my-feature');
-
-    expect(process.argv).toEqual(['node', 'gemini', '--prompt', 'hello']);
-  });
-
-  it('should strip -w alias from process.argv', async () => {
-    process.argv = ['node', 'gemini', '-w', 'my-feature', '--prompt', 'hello'];
-
-    await setupWorktree('my-feature');
-
-    expect(process.argv).toEqual(['node', 'gemini', '--prompt', 'hello']);
-  });
-
-  it('should strip --worktree=name format from process.argv', async () => {
-    process.argv = [
-      'node',
-      'gemini',
-      '--worktree=my-feature',
-      '--prompt',
-      'hello',
-    ];
-
-    await setupWorktree('my-feature');
-
-    expect(process.argv).toEqual(['node', 'gemini', '--prompt', 'hello']);
-  });
-
-  it('should strip -w=name format from process.argv', async () => {
-    process.argv = ['node', 'gemini', '-w=my-feature', '--prompt', 'hello'];
-
-    await setupWorktree('my-feature');
-
-    expect(process.argv).toEqual(['node', 'gemini', '--prompt', 'hello']);
-  });
-
-  it('should strip --worktree flag without value', async () => {
-    process.argv = ['node', 'gemini', '--worktree', '--prompt', 'hello'];
-
-    await setupWorktree('some-random-name');
-
-    expect(process.argv).toEqual(['node', 'gemini', '--prompt', 'hello']);
+    expect(coreFunctions.createWorktree).not.toHaveBeenCalled();
+    expect(process.chdir).not.toHaveBeenCalled();
+    expect(result).toBe(initialSettings);
   });
 
   it('should handle errors gracefully and exit', async () => {
@@ -169,7 +114,10 @@ describe('setupWorktree', () => {
       new Error('Git failure'),
     );
 
-    await expect(setupWorktree('my-feature')).rejects.toThrow('PROCESS_EXIT');
+    const initialSettings = { merged: {} } as never;
+    await expect(setupWorktree('my-feature', initialSettings)).rejects.toThrow(
+      'PROCESS_EXIT',
+    );
 
     expect(coreFunctions.writeToStderr).toHaveBeenCalledWith(
       expect.stringContaining(

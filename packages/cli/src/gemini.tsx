@@ -235,7 +235,7 @@ export async function main() {
   parseArgsHandle?.end();
 
   if (argv.worktree) {
-    settings = await setupWorktree(argv.worktree);
+    settings = await setupWorktree(argv.worktree, settings);
   }
 
   if (

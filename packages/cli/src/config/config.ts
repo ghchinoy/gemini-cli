@@ -164,8 +164,8 @@ export async function parseArguments(
           skipValidation: true,
           description:
             'Start Gemini in a new git worktree. If no name is provided, one is generated automatically.',
-          coerce: (value: string): string => {
-            const trimmed = value.trim();
+          coerce: (value: unknown): string => {
+            const trimmed = typeof value === 'string' ? value.trim() : '';
             if (trimmed === '') {
               return Math.random().toString(36).substring(2, 10);
             }

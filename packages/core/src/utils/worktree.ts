@@ -9,20 +9,14 @@ import { execa } from 'execa';
 
 export async function getProjectRootForWorktree(cwd: string): Promise<string> {
   try {
-    const { stdout } = await execa('git', ['rev-parse', '--show-toplevel'], {
+    const { stdout } = await execa('git', ['rev-parse', '--git-common-dir'], {
       cwd,
     });
-    const gitRoot = path.normalize(stdout.trim());
+    const gitCommonDir = stdout.trim();
+    const absoluteGitDir = path.resolve(cwd, gitCommonDir);
 
-    const worktreesPath = path.join('.gemini', 'worktrees');
-    const index = gitRoot.indexOf(worktreesPath);
-
-    if (index !== -1) {
-      // Strip everything from .gemini/worktrees onwards
-      return gitRoot.slice(0, Math.max(0, index - 1));
-    }
-
-    return gitRoot;
+    // The project root is the parent of the .git directory
+    return path.dirname(absoluteGitDir);
   } catch (_e) {
     return cwd;
   }
