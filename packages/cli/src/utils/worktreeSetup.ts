@@ -15,6 +15,7 @@ import {
 } from '@google/gemini-cli-core';
 import { loadSettings, type LoadedSettings } from '../config/settings.js';
 import { registerCleanup } from './cleanup.js';
+import { execa } from 'execa';
 
 /**
  * Sets up a git worktree for parallel sessions.
@@ -34,6 +35,12 @@ export async function setupWorktree(
 
   try {
     const projectRoot = await getProjectRootForWorktree(process.cwd());
+
+    // Capture the base commit before creating the worktree
+    const { stdout: baseSha } = await execa('git', ['rev-parse', 'HEAD'], {
+      cwd: projectRoot,
+    });
+
     const worktreePath = await createWorktree(projectRoot, worktreeName);
 
     process.chdir(worktreePath);
@@ -43,7 +50,7 @@ export async function setupWorktree(
     const newSettings = loadSettings(process.cwd());
 
     registerCleanup(async () => {
-      const hasChanges = await hasWorktreeChanges(worktreePath);
+      const hasChanges = await hasWorktreeChanges(worktreePath, baseSha.trim());
       if (!hasChanges) {
         try {
           await cleanupWorktree(worktreePath, projectRoot);
@@ -59,7 +66,7 @@ export async function setupWorktree(
         }
       } else {
         writeToStdout(
-          `\nWorktree '${worktreeName}' has uncommitted changes and was not removed. You can remove it manually with 'git worktree remove ${worktreePath}'.\n`,
+          `\nWorktree '${worktreeName}' has uncommitted changes or new commits and was not removed. You can remove it manually with 'git worktree remove ${worktreePath}'.\n`,
         );
       }
     });

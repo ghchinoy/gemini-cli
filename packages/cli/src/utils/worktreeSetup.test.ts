@@ -9,8 +9,10 @@ import { setupWorktree } from './worktreeSetup.js';
 import * as coreFunctions from '@google/gemini-cli-core';
 import * as settingsFunctions from '../config/settings.js';
 import * as cleanupFunctions from './cleanup.js';
+import { execa } from 'execa';
 
 // Mock dependencies
+vi.mock('execa');
 vi.mock('@google/gemini-cli-core', async (importOriginal) => {
   const actual =
     await importOriginal<typeof import('@google/gemini-cli-core')>();
@@ -54,6 +56,7 @@ describe('setupWorktree', () => {
     });
 
     // Mock successful execution of core utilities
+    vi.mocked(execa).mockResolvedValue({ stdout: 'base-sha' } as never);
     vi.mocked(coreFunctions.getProjectRootForWorktree).mockResolvedValue(
       '/mock/project',
     );

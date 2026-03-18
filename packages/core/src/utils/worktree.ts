@@ -48,11 +48,31 @@ export function isGeminiWorktree(
   return dirPath.startsWith(worktreesBaseDir);
 }
 
-export async function hasWorktreeChanges(dirPath: string): Promise<boolean> {
-  const { stdout } = await execa('git', ['status', '--porcelain'], {
+export async function hasWorktreeChanges(
+  dirPath: string,
+  baseSha?: string,
+): Promise<boolean> {
+  const { stdout: status } = await execa('git', ['status', '--porcelain'], {
     cwd: dirPath,
   });
-  return stdout.trim() !== '';
+  if (status.trim() !== '') {
+    return true;
+  }
+
+  if (baseSha) {
+    const { stdout: commits } = await execa(
+      'git',
+      ['rev-list', `${baseSha}..HEAD`],
+      {
+        cwd: dirPath,
+      },
+    );
+    if (commits.trim() !== '') {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 export async function cleanupWorktree(
